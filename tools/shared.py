@@ -513,6 +513,33 @@ def generate_sanity():
   return EMSCRIPTEN_VERSION + '|' + LLVM_ROOT + '|' + get_clang_version() + ('_wasm' if Settings.WASM_BACKEND else '')
 
 
+def run_npm_install_if_needed():
+  """Run npm install to update node_modules if package.json changes.
+  For normally node projects developers are expected to run this when they
+  fetch from git, but emscripten it not a normal node project so for now
+  at least we hide this extra step and do it for them.
+  """
+
+  # TODO(sbc): Return early here for emsdk users who should have node_modules
+  # pre-included at the correct version.  We can't do that right now since
+  # the top-level node_modules is explictly excluded:
+  # https://github.com/juj/emslave/blob/cef8e88eff61dd2114d1d6c86b161e5662e13394/bin/deploy_emscripten_llvm.py#L465
+
+  modules = os.path.join(__rootpath__, 'node_modules')
+  modules_stamp = os.path.join(__rootpath__, '.node_modules.stamp')
+  pkg_json = os.path.join(__rootpath__, 'package.json')
+  if os.path.exists(modules) and os.path.exists(modules_stamp):
+    if os.path.getmtime(modules_stamp) > os.path.getmtime(pkg_json):
+      return
+
+  npm = os.path.join(os.path.dirname(NODE_JS[0]), 'npm')
+  if not os.path.exists(npm):
+    exit_with_error('npm not found at: %s', npm)
+  logger.info('running `npm install` to update node_modules')
+  jsrun.run_js_tool(npm, NODE_JS, jsargs=['install'], cwd=__rootpath__)
+  open(modules_stamp, 'w').close()
+
+
 def check_sanity(force=False):
   """Check that basic stuff we need (a JS engine to compile, Node.js, and Clang
   and LLVM) exists.
@@ -520,10 +547,14 @@ def check_sanity(force=False):
   The test runner always does this check (through |force|). emcc does this less
   frequently, only when ${EM_CONFIG}_sanity does not exist or is older than
   EM_CONFIG (so, we re-check sanity when the settings are changed).  We also
-  re-check sanity and clear the cache when the version changes"""
+  re-check sanity and clear the cache when the version changes
+  """
   with ToolchainProfiler.profile_block('sanity'):
+    run_npm_install_if_needed()
+
     check_llvm_version()
     expected = generate_sanity()
+
     if os.environ.get('EMCC_SKIP_SANITY_CHECK') == '1':
       return
     reason = None
